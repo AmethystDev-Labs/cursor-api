@@ -3,6 +3,44 @@ ARG TARGETARCH
 ARG BUILD_PREVIEW=false
 ARG BUILD_COMPAT=false
 
+# ==================== 前端构建阶段 ====================
+FROM node:20-slim AS frontend-builder
+
+WORKDIR /build
+
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends zip && \
+    rm -rf /var/lib/apt/lists/*
+
+COPY scripts/ scripts/
+COPY static/ static/
+COPY README.md .
+
+RUN cd scripts && npm ci
+
+RUN node scripts/minify.js \
+        tokens.html \
+        proxies.html \
+        logs.html \
+        config.html \
+        api.html \
+        build_key.html \
+        shared.js \
+        shared-styles.css && \
+    node scripts/minify.js README.md
+
+RUN cd static && zip /build/frontend.zip \
+        tokens.min.html \
+        proxies.min.html \
+        logs.min.html \
+        config.min.html \
+        api.min.html \
+        build_key.min.html \
+        shared.min.js \
+        shared-styles.min.css \
+        readme.min.html \
+        route_registry.json
+
 # ==================== 构建阶段 ====================
 FROM --platform=linux/${TARGETARCH} rustlang/rust:nightly-trixie-slim AS builder
 
@@ -23,6 +61,9 @@ RUN apt-get update && \
     esac
 
 COPY . .
+
+# 从前端构建阶段复制已打包好的前端资源
+COPY --from=frontend-builder /build/frontend.zip ./frontend.zip
 
 # 根据构建选项，设置编译参数并构建项目
 RUN \
@@ -70,6 +111,8 @@ FROM scratch
 
 # 从构建阶段复制二进制文件，并设置为非 root 用户所有
 COPY --chown=1001:1001 --chmod=0700 --from=builder /app /app
+# 从前端构建阶段复制前端资源包
+COPY --chown=1001:1001 --from=frontend-builder /build/frontend.zip /app/frontend.zip
 
 WORKDIR /app
 
